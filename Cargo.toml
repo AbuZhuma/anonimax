@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-wreq = "5.3"
+wreq = { version = "5.3", features = ["socks"] }
 wreq-util = "2.2"
 async-trait = "0.1"
 anyhow = "1"

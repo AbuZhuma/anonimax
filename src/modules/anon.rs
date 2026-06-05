@@ -1,6 +1,7 @@
 use crate::identity::{Profile, PROFILES};
 use crate::module::{CmdInfo, Context, Module};
 use crate::proxy::{Mode, Pool};
+use crate::tor::Tor;
 use async_trait::async_trait;
 use owo_colors::OwoColorize;
 use std::sync::Mutex;
@@ -15,6 +16,14 @@ struct State {
     current: Profile,
     auto_rotate: bool,
     pool: Pool,
+    tor: Tor,
+}
+
+struct Prepared {
+    client: Client,
+    proxy: Option<String>,
+    label: &'static str,
+    via_tor: bool,
 }
 
 impl Anon {
@@ -24,56 +33,67 @@ impl Anon {
                 current: Profile::random(),
                 auto_rotate: true,
                 pool: Pool::new(),
+                tor: Tor::new(),
             }),
         }
     }
 
-    fn prepare(&self) -> anyhow::Result<(Client, Option<String>, &'static str)> {
-        let (profile, proxy) = {
+    fn prepare(&self) -> anyhow::Result<Prepared> {
+        let (profile, proxy, via_tor) = {
             let mut s = self.state.lock().unwrap();
             if s.auto_rotate {
                 s.current = Profile::random();
             }
-            let proxy = s.pool.next();
-            (s.current, proxy)
+            if s.tor.enabled {
+                (s.current, Some(s.tor.isolated_proxy()), true)
+            } else {
+                let proxy = s.pool.next();
+                (s.current, proxy, false)
+            }
         };
-        let client = Client::builder().emulation(profile.emulation()).build()?;
-        Ok((client, proxy, profile.label))
+        let mut builder = Client::builder().emulation(profile.emulation());
+        if let Some(pr) = &proxy {
+            builder = builder.proxy(wreq::Proxy::all(pr.as_str())?);
+        }
+        let client = builder.build()?;
+        Ok(Prepared { client, proxy, label: profile.label, via_tor })
     }
 
     async fn get_text(&self, url: &str) -> anyhow::Result<(u16, u128, String, String)> {
-        let (client, proxy, label) = self.prepare()?;
-        let mut rb = client.get(url);
-        if let Some(p) = &proxy {
-            rb = rb.proxy(p.as_str());
-        }
+        let p = self.prepare()?;
+        let rb = p.client.get(url);
         let start = Instant::now();
         let resp = rb.send().await?;
         let status = resp.status().as_u16();
         let body = resp.text().await?;
         let ms = start.elapsed().as_millis();
-        let via = proxy.unwrap_or_else(|| "<real IP>".to_string());
-        let _ = label;
+        let via = if p.via_tor {
+            "Tor".to_string()
+        } else {
+            p.proxy.unwrap_or_else(|| "<real IP>".to_string())
+        };
         Ok((status, ms, body, via))
     }
 
     async fn send(&self, url: &str) -> anyhow::Result<()> {
-        let (client, proxy, label) = self.prepare()?;
+        let p = self.prepare()?;
+        let (client, proxy, label, via_tor) = (p.client, p.proxy, p.label, p.via_tor);
         println!(
             "{} {} {}",
             "→".green().bold(),
             "as".dimmed(),
             label.yellow()
         );
-        match &proxy {
-            Some(p) => println!("  {} {}", "via".dimmed(), p.cyan()),
-            None => println!("  {}", "no proxy — using your REAL IP".red()),
+        if via_tor {
+            println!("  {} {}", "via".dimmed(), "Tor (new circuit)".magenta());
+        } else {
+            match &proxy {
+                Some(pr) => println!("  {} {}", "via".dimmed(), pr.cyan()),
+                None => println!("  {}", "no proxy — using your REAL IP".red()),
+            }
         }
 
-        let mut rb = client.get(url);
-        if let Some(p) = &proxy {
-            rb = rb.proxy(p.as_str());
-        }
+        let rb = client.get(url);
         let start = Instant::now();
         let resp = rb.send().await?;
         let ms = start.elapsed().as_millis();
@@ -128,8 +148,57 @@ impl Anon {
         println!("{}", "  current setup".bold().cyan());
         kv("browser/device", s.current.label);
         kv("auto-rotate", if s.auto_rotate { "on" } else { "off" });
+        if s.tor.enabled {
+            kv("route", "Tor (new IP per request)");
+        } else {
+            kv("route", "direct / proxy pool");
+        }
         kv("proxy mode", s.pool.mode().label());
         kv("proxy pool", &format!("{} loaded", s.pool.len()));
+    }
+
+    async fn tor_cmd(&self, args: &[String]) -> anyhow::Result<()> {
+        match args.get(1).map(|s| s.as_str()) {
+            Some("on") => {
+                let socks = self.state.lock().unwrap().tor.socks.clone();
+                if !crate::tor::reachable(&socks).await {
+                    println!("{} Tor SOCKS not reachable at {}", "error:".red(), socks);
+                    println!(
+                        "  {}",
+                        "start Tor first:  sudo systemctl start tor   (or run the Tor service)"
+                            .dimmed()
+                    );
+                    return Ok(());
+                }
+                self.state.lock().unwrap().tor.enabled = true;
+                println!("{}", "Tor: on — every request gets a fresh exit IP".green());
+                self.ip().await?;
+            }
+            Some("off") => {
+                self.state.lock().unwrap().tor.enabled = false;
+                println!("{}", "Tor: off".yellow());
+            }
+            Some("new") | Some("newnym") => {
+                let control = self.state.lock().unwrap().tor.control.clone();
+                match crate::tor::new_identity(&control).await {
+                    Ok(()) => println!("{}", "Tor: requested new circuits (NEWNYM)".green()),
+                    Err(e) => println!("{} {e}", "NEWNYM failed:".red()),
+                }
+            }
+            Some("ip") | Some("check") => self.ip().await?,
+            _ => {
+                let s = self.state.lock().unwrap();
+                println!("{}", "Tor".bold().underline());
+                kv("status", if s.tor.enabled { "on" } else { "off" });
+                kv("socks", &s.tor.socks);
+                kv("control", &s.tor.control);
+                println!(
+                    "  {}",
+                    "commands: tor <on|off|new|ip>".dimmed()
+                );
+            }
+        }
+        Ok(())
     }
 }
 
@@ -172,6 +241,7 @@ impl Module for Anon {
     fn commands(&self) -> Vec<CmdInfo> {
         vec![
             CmdInfo { name: "send",     usage: "send <url>",            about: "GET a URL with a full browser emulation" },
+            CmdInfo { name: "tor",      usage: "tor <on|off|new|ip>",   about: "Route through Tor — fresh exit IP per request" },
             CmdInfo { name: "ip",       usage: "ip",                    about: "Leak check: show exit IP / geo / ISP a server sees" },
             CmdInfo { name: "test",     usage: "test",                  about: "Inspect your TLS/JA3 fingerprint (tls.peet.ws)" },
             CmdInfo { name: "rotate",   usage: "rotate",                about: "Switch to a new random browser/device now" },
@@ -234,6 +304,7 @@ impl Module for Anon {
                 _ => println!("{}", "usage: auto <on|off>".red()),
             },
             "proxy" => self.proxy_cmd(args).await?,
+            "tor" => self.tor_cmd(args).await?,
             "id" | "identity" => self.show_id(),
             "" => println!("{}", "type `help` for anon commands".dimmed()),
             other => println!("{} {}", "unknown command:".red(), other),

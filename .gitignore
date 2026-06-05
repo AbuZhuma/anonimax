@@ -2,6 +2,8 @@
 **/*.rs.bk
 *.pdb
 
+.cargo/config.toml
+
 proxies.txt
 *.proxies
 

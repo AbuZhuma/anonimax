@@ -1,79 +1,86 @@
 # anonimax
 
-Модульная анти-детект CLI-панель. Запускаешь `anonimax` - попадаешь в
-интерактивную панель, где подключаешь модули. Модуль `anon` отправляет
-HTTP-запросы с **полной эмуляцией реального браузера** (TLS/JA3, HTTP2, порядок
-заголовков, UA, client-hints) и сменой IP через ротируемый пул прокси.
+Модульная анти-детект CLI-панель: запросы с полной эмуляцией браузера
+(TLS/JA3, HTTP2, заголовки, UA) и сменой IP через Tor или прокси.
 
-## Запуск
+## Установка на новом устройстве
+
+Пример для Arch. Для Debian/Ubuntu замени шаг 1 на:
+`sudo apt install -y git cargo cmake clang build-essential tor`
 
 ```bash
-anonimax            # установлен через `cargo install --path .`
-# или из папки проекта:
-cargo run
+# 1. Зависимости + Tor
+sudo pacman -S --needed git rust cmake clang gcc tor
+
+# 2. Запустить Tor
+sudo systemctl enable --now tor
+
+# 3. Собрать и установить
+git clone <репозиторий> anonimax
+cd anonimax
+cargo install --path .
+
+# 4. PATH (только если `anonimax: command not found`)
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+
+# 5. Запуск
+anonimax
+```
+
+Дальше — в самой панели:
+
+```
+use anon
+tor on
+ip
 ```
 
 ## Команды панели
 
-| Команда          | Что делает                  |
-|------------------|-----------------------------|
-| `modules`        | список модулей              |
-| `use <module>`   | войти в модуль              |
-| `back`           | выйти из модуля             |
-| `help`           | справка (зависит от модуля) |
-| `exit`           | выход                       |
+| Команда        | Что делает        |
+|----------------|-------------------|
+| `modules`      | список модулей    |
+| `use <module>` | войти в модуль    |
+| `back`         | выйти из модуля   |
+| `help`         | справка по модулю |
+| `exit`         | выход             |
 
 ## Модуль `anon`
 
 ```
-use anon
-id                      # текущая настройка (браузер, прокси-режим, размер пула)
+id                      # текущая настройка (браузер, маршрут, прокси)
+ip                      # какой IP/страну/ISP видит сервер
 test                    # показать свой TLS-отпечаток (tls.peet.ws)
-ip                      # ПРОВЕРКА УТЕЧКИ: какой IP/страну/ISP видит сервер
 send <url>              # GET с полной эмуляцией браузера
 
 browser list            # доступные браузеры/устройства
-browser firefox         # закрепить браузер (auto-rotate выключается)
-rotate                  # сменить браузер на случайный сейчас
-auto on|off             # менять браузер случайно перед каждым запросом
+browser firefox         # закрепить браузер
+rotate                  # сменить браузер на случайный
+auto on|off             # менять браузер перед каждым запросом
 
-proxy add socks5h://host:port        # добавить прокси (вкл. http://user:pass@host:port)
-proxy load proxies.txt               # загрузить список (по одному на строку, # - комментарий)
-proxy list                           # показать пул
-proxy mode rotate|random|off         # как ротировать IP
-proxy clear                          # очистить пул
+tor on|off              # маршрут через Tor (новый exit IP на каждый запрос)
+tor ip                  # проверить текущий exit IP
+tor new                 # сбросить все цепочки Tor (NEWNYM)
+
+proxy add socks5h://login:pass@host:port   # добавить прокси
+proxy load proxies.txt                     # загрузить список (по строке, # - коммент)
+proxy list                                 # показать пул
+proxy mode rotate|random|off               # как ротировать IP
+proxy clear                                # очистить пул
 ```
 
-> **IP:** код сам по себе IP не меняет. Без прокси (`proxy mode off`) запрос идёт
-> с реального IP. Чтобы IP менялся - добавь прокси и включи `rotate`/`random`.
-> Проверяй результат командой `ip`.
+## Модуль `system` — весь трафик устройства через Tor
 
-## Сборка на этой машине
+Меняет IP у **всего** (браузер, приложения, скрипты) — заворачивает весь TCP+DNS
+в Tor через firewall. Нужен root (спросит пароль sudo). Отпечаток не меняет.
 
-`wreq` использует **BoringSSL** (тот же TLS-движок, что в Chrome) - именно он даёт
-настоящий браузерный отпечаток. Для сборки настроены два пути в
-[.cargo/config.toml](.cargo/config.toml):
-
-- **`CMAKE`** → self-contained CMake в `~/.local/opt` (пакет из репозиториев Arch
-  был недоступен на зеркалах).
-- **`BINDGEN_EXTRA_CLANG_ARGS`** → путь к заголовкам gcc (у установленного
-  libclang нет своих, bindgen не находил `stddef.h`).
-
-Если обновишь gcc и сборка снова начнёт ругаться на `stddef.h` - поправь номер
-версии gcc в этом пути.
-
-## Как добавить новый модуль
-
-1. Создай `src/modules/<name>.rs`, реализуй трейт `module::Module`.
-2. `mod <name>;` в [src/modules/mod.rs](src/modules/mod.rs).
-3. Одна строка `reg.add(Box::new(<name>::Type::new()));` в `registry()`.
-
-Панель сама подхватит модуль в `modules`, `use` и `help`.
-
-## Куда расти
-
-- Параллельный режим (много запросов с разными identity сразу).
-- Сохранение/загрузка профиля сессии (выбранные браузеры, пул прокси).
-- Модуль проверки качества прокси (живой/мёртвый, скорость, гео).
-- Cookie-jar на каждую identity, чтобы сессии не смешивались.
 ```
+use system
+system status          # проверить, идёт ли весь трафик через Tor
+system on              # завернуть всё устройство в Tor
+system off             # вернуть как было
+```
+
+> После `system on` проверь сайтом whatismyipaddress.com в обычном браузере — IP
+> должен быть Tor-узла. `system off` возвращает сеть в исходное состояние (правила
+> firewall сохраняются в бэкап и восстанавливаются).

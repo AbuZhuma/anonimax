@@ -3,6 +3,7 @@ mod module;
 mod modules;
 mod proxy;
 mod shell;
+mod tor;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
