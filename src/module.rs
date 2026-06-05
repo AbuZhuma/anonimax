@@ -22,6 +22,8 @@ pub trait Module: Send + Sync {
     fn commands(&self) -> Vec<CmdInfo>;
 
     async fn run(&self, ctx: &mut Context, args: &[String]) -> anyhow::Result<()>;
+
+    async fn reset(&self) {}
 }
 
 pub struct Registry {

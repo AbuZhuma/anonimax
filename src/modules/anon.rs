@@ -316,6 +316,11 @@ impl Module for Anon {
         ]
     }
 
+    async fn reset(&self) {
+        self.engine.reset();
+        self.headers.lock().unwrap().clear();
+    }
+
     async fn run(&self, _ctx: &mut Context, args: &[String]) -> anyhow::Result<()> {
         match args.first().map(|s| s.as_str()).unwrap_or("") {
             "send" => self.send(args).await?,

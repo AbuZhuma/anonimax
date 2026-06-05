@@ -98,20 +98,44 @@ async fn dispatch(registry: &Registry, ctx: &mut Context, line: &str) -> bool {
             help(registry, ctx);
             return false;
         }
+        "clear" | "cls" => {
+            use std::io::Write as _;
+            print!("\x1b[2J\x1b[3J\x1b[H");
+            let _ = std::io::stdout().flush();
+            for m in registry.all() {
+                m.reset().await;
+            }
+            ctx.active = None;
+            println!("{}", "everything reset — fresh state".green());
+            return false;
+        }
         _ => {}
+    }
+
+    if let Some(module) = registry.get(cmd) {
+        if matches!(args.get(1).map(|s| s.as_str()), Some("help") | Some("?")) {
+            print_module_help(module);
+        } else if args.len() > 1 {
+            if let Err(e) = module.run(ctx, &args[1..].to_vec()).await {
+                println!("{} {e}", "error:".red().bold());
+            }
+        } else {
+            ctx.active = Some(cmd.to_string());
+            println!("{} {}", "switched to module:".green(), cmd.yellow());
+        }
+        return false;
     }
 
     match ctx.active.clone() {
         Some(name) => {
             let module = registry.get(&name).expect("active module exists");
-            let forwarded = if args[0] == name { args[1..].to_vec() } else { args };
-            if let Err(e) = module.run(ctx, &forwarded).await {
+            if let Err(e) = module.run(ctx, &args).await {
                 println!("{} {e}", "error:".red().bold());
             }
         }
         None => {
             println!(
-                "{} `{}` — type `help`, or `use <module>` first",
+                "{} `{}` — type `help`, `use <module>`, or `<module> <command>`",
                 "unknown command:".red(),
                 cmd
             );
@@ -136,7 +160,9 @@ fn help(registry: &Registry, ctx: &Context) {
     let globals = [
         ("modules", "list available modules"),
         ("use <module>", "enter a module"),
+        ("<module> help", "show a module's commands"),
         ("back", "leave the current module"),
+        ("clear", "reset all state + clear screen"),
         ("help", "show this help"),
         ("exit", "quit anonimax"),
     ];
@@ -146,12 +172,18 @@ fn help(registry: &Registry, ctx: &Context) {
 
     if let Some(name) = &ctx.active {
         if let Some(m) = registry.get(name) {
-            println!("\n{} {}", "module:".bold().underline(), name.yellow().bold());
-            for c in m.commands() {
-                println!("  {:<22} {}", c.usage.cyan(), c.about.dimmed());
-            }
+            println!();
+            print_module_help(m);
         }
     } else {
-        println!("\n{}", "enter a module with `use <module>` to see its commands".dimmed());
+        println!("\n{}", "enter a module with `use <module>`, or `<module> help` to see its commands".dimmed());
+    }
+}
+
+fn print_module_help(m: &dyn crate::module::Module) {
+    println!("{} {}", "module:".bold().underline(), m.name().yellow().bold());
+    println!("  {}", m.description().dimmed());
+    for c in m.commands() {
+        println!("  {:<22} {}", c.usage.cyan(), c.about.dimmed());
     }
 }

@@ -136,6 +136,12 @@ impl Module for Gateway {
         ]
     }
 
+    async fn reset(&self) {
+        if let Some(r) = self.running.lock().unwrap().take() {
+            let _ = r.shutdown.send(());
+        }
+    }
+
     async fn run(&self, _ctx: &mut Context, args: &[String]) -> anyhow::Result<()> {
         match args.first().map(|s| s.as_str()).unwrap_or("") {
             "start" => {

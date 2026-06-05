@@ -116,6 +116,14 @@ impl Engine {
         }
     }
 
+    pub fn reset(&self) {
+        let mut s = self.state.lock().unwrap();
+        s.current = Profile::random();
+        s.auto_rotate = true;
+        s.pool.clear();
+        s.tor.enabled = false;
+    }
+
     pub fn set_current(&self, p: Profile) {
         self.state.lock().unwrap().current = p;
     }
