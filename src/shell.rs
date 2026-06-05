@@ -104,7 +104,8 @@ async fn dispatch(registry: &Registry, ctx: &mut Context, line: &str) -> bool {
     match ctx.active.clone() {
         Some(name) => {
             let module = registry.get(&name).expect("active module exists");
-            if let Err(e) = module.run(ctx, &args).await {
+            let forwarded = if args[0] == name { args[1..].to_vec() } else { args };
+            if let Err(e) = module.run(ctx, &forwarded).await {
                 println!("{} {e}", "error:".red().bold());
             }
         }

@@ -51,7 +51,12 @@ ip
 id                      # текущая настройка (браузер, маршрут, прокси)
 ip                      # какой IP/страну/ISP видит сервер
 test                    # показать свой TLS-отпечаток (tls.peet.ws)
-send <url>              # GET с полной эмуляцией браузера
+
+send <url>                       # GET
+send POST <url> <тело>           # любой метод: GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS
+send PUT https://api/x '{"a":1}' # пример с телом
+header add X-Token abc123        # заголовок ко всем запросам
+header list | header clear       # показать / очистить заголовки
 
 browser list            # доступные браузеры/устройства
 browser firefox         # закрепить браузер
@@ -69,10 +74,35 @@ proxy mode rotate|random|off               # как ротировать IP
 proxy clear                                # очистить пул
 ```
 
+## Модуль `gateway` — запросы из своего кода через anonimax
+
+Поднимает локальный HTTP-сервер. Любой твой код (Python, Node, и т.д.) шлёт
+простой JSON, а anonimax выполняет запрос с эмуляцией браузера + текущим
+маршрутом (Tor/прокси из модуля `anon`) и возвращает ответ.
+
+```
+use gateway
+start                   # поднять на 127.0.0.1:8888 (можно: start 9000)
+status
+stop
+```
+
+Запрос из кода:
+
+```python
+import requests
+r = requests.post("http://127.0.0.1:8888/request", json={
+    "method": "GET",
+    "url": "https://api.ipify.org?format=json",
+    "headers": {"X-Token": "abc"},   # необязательно
+    "body": None                     # необязательно
+})
+```
+
 ## Модуль `system` — весь трафик устройства через Tor
 
 Меняет IP у **всего** (браузер, приложения, скрипты) — заворачивает весь TCP+DNS
-в Tor через firewall. Нужен root (спросит пароль sudo). Отпечаток не меняет.
+в Tor через firewall. Нужен root (спросит пароль sudo).
 
 ```
 use system
@@ -80,7 +110,3 @@ system status          # проверить, идёт ли весь трафик
 system on              # завернуть всё устройство в Tor
 system off             # вернуть как было
 ```
-
-> После `system on` проверь сайтом whatismyipaddress.com в обычном браузере — IP
-> должен быть Tor-узла. `system off` возвращает сеть в исходное состояние (правила
-> firewall сохраняются в бэкап и восстанавливаются).
